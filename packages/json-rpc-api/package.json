@@ -39,9 +39,9 @@
     "!dist/esm/**/*.ts"
   ],
   "engines": {
-    "node": ">20.0.0"
+    "node": ">=22.20.0"
   },
   "devDependencies": {
-    "@types/vscode": "^1.106.0"
+    "@types/vscode": "^1.106.1"
   }
 }
