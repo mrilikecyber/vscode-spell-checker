@@ -1,0 +1,72 @@
+# GitHub Actions: generate SBOMs with Syft and optionally scan with Grype,
+# designed to run on GitHub's free ubuntu-latest runners.
+#
+# Comments explain each step and why it's included. Drop this file at:
+# .github/workflows/syft-sbom.yml
+
+name: Syft SBOM + Grype scan
+
+# Run on pushes and PRs to main (adjust branches/events as you need)
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+# Minimal permissions needed to checkout and upload artifacts
+permissions:
+  contents: read
+
+jobs:
+  sbom:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout the repository
+        uses: actions/checkout@v4
+        # This fetches the repo into $GITHUB_WORKSPACE for Syft to scan.
+
+      - name: Install Syft (Anchore) into /usr/local/bin
+        # Installing Syft via the official install script keeps the runner simple.
+        # We install to /usr/local/bin so it's on PATH for subsequent steps.
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+          # show version to confirm install
+          syft version
+
+      - name: Generate SBOMs (CycloneDX and SPDX) for the repository
+        # Syft supports scanning directories directly (no Dockerfile/image needed).
+        # Output written into the sbom directory which we upload later.
+        run: |
+          mkdir -p sbom
+          # CycloneDX (good for many tooling integrations)
+          syft dir:. -o cyclonedx --file sbom/sbom.cyclonedx.json
+          # SPDX JSON (another common SBOM format)
+          syft dir:. -o spdx-json --file sbom/sbom.spdx.json
+          echo "Generated SBOM files:"
+          ls -la sbom
+
+      - name: Install Grype (optional vulnerability scan)
+        # Grype can scan SBOMs quickly to map to CVEs/OSV.
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin
+          grype version
+
+      - name: Scan the CycloneDX SBOM with Grype and produce JSON report
+        # Using the SBOM to scan is fast and consistent. We keep the job non-fatal
+        # (|| true) so you can inspect results as artifacts; change behavior if you
+        # want to fail the job on high severity findings.
+        run: |
+          mkdir -p sbom
+          grype sbom:sbom/sbom.cyclonedx.json -o json > sbom/grype-report.json || true
+          echo "grype report (truncated):"
+          head -n 200 sbom/grype-report.json || true
+
+      - name: Upload SBOMs and reports as workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-and-reports
+          path: sbom/
+          # The sbom/ directory will contain:
+          # - sbom.cyclonedx.json
+          # - sbom.spdx.json
+          # - grype-report.json
